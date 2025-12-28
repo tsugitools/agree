@@ -80,3 +80,16 @@ Signature data is stored in the Result settings JSON blob for each user/link com
 - Agreement text is safely rendered to prevent XSS
 - Newlines in agreement text are preserved for readability
 
+## Testing
+
+This tool includes Playwright-based browser tests. See [tests/playwright/tests/README.md](tests/playwright/tests/README.md) for details on running the tests.
+
+Quick start:
+```bash
+cd tests/playwright
+npm install
+npx playwright install
+export TSUGI_BASE_URL=http://localhost:8888/py4e
+npm run test:headed
+```
+

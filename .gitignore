@@ -1,0 +1,53 @@
+# IDE and Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# PHP
+*.cache
+composer.phar
+vendor/
+
+# Node (if using any JS build tools)
+node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json
+
+# Environment and config (if any local configs)
+.env
+.env.local
+*.local.php
+
+# Build artifacts
+dist/
+build/
+
+# Test results and reports
+tests/playwright/playwright-report/
+tests/playwright/test-results/
+tests/playwright/node_modules/
+

@@ -141,7 +141,7 @@ if ($signature_data && isset($signature_data['signed']) && $signature_data['sign
     if (isset($_SESSION['sesskey'])) {
         echo('<input type="hidden" name="sesskey" value="'.htmlentities($_SESSION['sesskey']).'">');
     }
-    echo('<button type="submit" name="clear_signature" class="btn btn-warning">Clear Signature</button>');
+    echo('<button type="submit" name="clear_signature" class="btn btn-warning" data-testid="clear-signature">Clear Signature</button>');
     echo('</form>');
     
 } else {

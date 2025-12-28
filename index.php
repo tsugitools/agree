@@ -240,6 +240,8 @@ if ($USER->instructor) {
 $OUTPUT->header();
 $OUTPUT->bodyStart();
 $OUTPUT->topNav($menu);
+// Add data-testid to body for role detection after body is rendered
+echo('<script>document.body.setAttribute("data-testid", "'.($USER->instructor ? 'instructor-view' : 'student-view').'");</script>');
 
 if ($USER->instructor) {
     $OUTPUT->welcomeUserCourse();
@@ -262,6 +264,12 @@ if ($USER->instructor) {
     SettingsForm::textarea('agreement_text', __('Agreement Text'), $agreement_text);
     SettingsForm::done();
     SettingsForm::end();
+    // Add testids to SettingsForm elements via JavaScript
+    echo('<script>
+        document.querySelector("textarea[name=\'agreement_text\']")?.setAttribute("data-testid", "agreement-text");
+        document.querySelector("input[name=\'confirm_clear\']")?.setAttribute("data-testid", "i-understand");
+        document.querySelector("form button[type=\'submit\'], form input[type=\'submit\']")?.setAttribute("data-testid", "save-agreement");
+    </script>');
     
     echo('<hr>');
     
@@ -317,7 +325,7 @@ if ($USER->instructor) {
         
         $rows = $PDOX->allRowsDie($sql_with_extracted, $query_parms);
         
-        echo('<table class="table table-striped">');
+        echo('<table class="table table-striped" data-testid="student-data-table">');
         echo('<thead><tr>');
         echo('<th>Student Name</th>');
         echo('<th>Typed Name</th>');
@@ -344,7 +352,7 @@ if ($USER->instructor) {
                     echo('<td>-</td>');
                 }
                 echo('<td>Y</td>');
-                echo('<td><a href="'.addSession('student-detail.php?user_id='.$student['user_id']).'" class="btn btn-sm btn-primary">View Details</a></td>');
+                echo('<td><a href="'.addSession('student-detail.php?user_id='.$student['user_id']).'" class="btn btn-sm btn-primary" data-testid="student-row-'.$student['user_id'].'">View Details</a></td>');
             } else {
                 echo('<td>-</td>');
                 echo('<td>-</td>');
@@ -407,21 +415,21 @@ if ($USER->instructor) {
         echo('</div>');
     } else if ($signature_data && isset($signature_data['signed']) && $signature_data['signed']) {
         // Already signed - show confirmation
-        echo('<div class="alert alert-success">');
+        echo('<div class="alert alert-success" data-testid="signed-confirmation">');
         echo('<h3>You have signed this agreement</h3>');
         
         $signed_at = isset($signature_data['signed_at']) ? $signature_data['signed_at'] : '';
         if ($signed_at) {
             $dt = new DateTime($signed_at);
-            echo('<p><strong>Signed on:</strong> '.htmlentities($dt->format('F j, Y \a\t g:i A')).'</p>');
+            echo('<p><strong>Signed on:</strong> <span data-testid="signed-at">'.htmlentities($dt->format('F j, Y \a\t g:i A')).'</span></p>');
         }
         
-        echo('<p><strong>Signed as:</strong> '.htmlentities($signature_data['typed_name'] ?? '').'</p>');
+        echo('<p><strong>Signed as:</strong> <span data-testid="signed-name">'.htmlentities($signature_data['typed_name'] ?? '').'</span></p>');
         echo('</div>');
         
         echo('<hr>');
         echo('<h3>Agreement Text You Signed</h3>');
-        echo('<div class="well" style="white-space: pre-wrap;">'.htmlentities($signature_data['agreement_text_snapshot'] ?? '').'</div>');
+        echo('<div class="well" style="white-space: pre-wrap;" data-testid="agreement-snapshot">'.htmlentities($signature_data['agreement_text_snapshot'] ?? '').'</div>');
         
     } else {
         // Show agreement and sign form
@@ -436,20 +444,20 @@ if ($USER->instructor) {
         
         echo('<div class="form-group">');
         echo('<label for="typed_name">Type your name:</label>');
-        echo('<input type="text" class="form-control" id="typed_name" name="typed_name" required placeholder="Type your name">');
+        echo('<input type="text" class="form-control" id="typed_name" name="typed_name" required placeholder="Type your name" data-testid="typed-name">');
         echo('</div>');
         
         echo('<div class="form-group">');
         echo('<div class="checkbox">');
         echo('<label>');
-        echo('<input type="checkbox" name="agree" value="1" required> ');
+        echo('<input type="checkbox" name="agree" value="1" required data-testid="agree-checkbox"> ');
         echo('<strong>I agree</strong>');
         echo('</label>');
         echo('</div>');
         echo('</div>');
         
         echo('<div class="form-group">');
-        echo('<button type="submit" name="sign" class="btn btn-primary btn-lg">Sign Agreement</button>');
+        echo('<button type="submit" name="sign" class="btn btn-primary btn-lg" data-testid="sign-button">Sign Agreement</button>');
         echo('</div>');
         
         echo('</form>');
