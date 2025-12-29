@@ -3,17 +3,26 @@ import { Page, FrameLocator, expect } from '@playwright/test';
 const TSUGI_BASE_URL = process.env.TSUGI_BASE_URL || 'http://localhost';
 const STORE_URL = `${TSUGI_BASE_URL}/tsugi/store`;
 
+const SCREENSHOT_DIR = './screenshots';
+
 /**
  * Debug helper - take screenshot and log page content
  */
 async function debugPage(page: Page, label: string): Promise<void> {
   if (process.env.DEBUG) {
+    // Ensure screenshot directory exists
+    const fs = require('fs');
+    if (!fs.existsSync(SCREENSHOT_DIR)) {
+      fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+    }
+    
     console.log(`\n=== DEBUG: ${label} ===`);
     console.log(`URL: ${page.url()}`);
     const title = await page.title().catch(() => 'N/A');
     console.log(`Title: ${title}`);
-    await page.screenshot({ path: `debug-${label.replace(/\s+/g, '-')}.png` });
-    console.log(`Screenshot saved: debug-${label.replace(/\s+/g, '-')}.png`);
+    const screenshotPath = `${SCREENSHOT_DIR}/debug-${label.replace(/\s+/g, '-')}.png`;
+    await page.screenshot({ path: screenshotPath });
+    console.log(`Screenshot saved: ${screenshotPath}`);
   }
 }
 
@@ -28,9 +37,9 @@ export async function goToStore(page: Page): Promise<void> {
   await page.waitForTimeout(1000);
 }
 
-// Track if we've already launched the tool (to use identity switcher)
-let toolLaunched = false;
-let currentPage: Page | null = null;
+// Track if we've already launched the tool per page (to use identity switcher)
+// Use a Map to track per-page state since tests might run in parallel
+const toolLaunchedMap = new Map<Page, boolean>();
 
 /**
  * Launch a tool as a specific role via the store harness
@@ -46,8 +55,8 @@ export async function launchToolAs(
   role: 'instructor' | 'student',
   studentIndex?: number
 ): Promise<FrameLocator> {
-  // If tool is already launched, use identity switcher instead of going back to store
-  if (toolLaunched && currentPage === page) {
+  // If tool is already launched for this page, use identity switcher instead of going back to store
+  if (toolLaunchedMap.get(page)) {
     return await switchIdentity(page, role, studentIndex);
   }
   
@@ -79,8 +88,8 @@ export async function launchToolAs(
     'button.btn, a.btn',
   ];
   
-  let tryItButton = null;
-  let foundSelector = null;
+  let tryItButton: any = null;
+  let foundSelector: string | null = null;
   for (const selector of tryItSelectors) {
     tryItButton = page.locator(selector).first();
     if (await tryItButton.isVisible({ timeout: 2000 }).catch(() => false)) {
@@ -91,11 +100,17 @@ export async function launchToolAs(
   }
   
   if (!tryItButton || !foundSelector) {
+    // Ensure screenshot directory exists
+    const fs = require('fs');
+    if (!fs.existsSync(SCREENSHOT_DIR)) {
+      fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+    }
     // Fallback: take a screenshot for debugging
-    await page.screenshot({ path: 'try-it-not-found.png', fullPage: true });
+    const screenshotPath = `${SCREENSHOT_DIR}/try-it-not-found.png`;
+    await page.screenshot({ path: screenshotPath, fullPage: true });
     const bodyText = await page.textContent('body').catch(() => 'Could not get body text');
     console.log('Page body text (first 500 chars):', bodyText?.substring(0, 500));
-    throw new Error('Could not find "Try It" button. Screenshot saved to try-it-not-found.png. Set DEBUG=1 for more details.');
+    throw new Error(`Could not find "Try It" button. Screenshot saved to ${screenshotPath}. Set DEBUG=1 for more details.`);
   }
   
   await tryItButton.scrollIntoViewIfNeeded();
@@ -109,9 +124,8 @@ export async function launchToolAs(
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000); // Give iframe time to load
     
-    // Mark as launched
-    toolLaunched = true;
-    currentPage = page;
+    // Mark as launched for this page
+    toolLaunchedMap.set(page, true);
     
     // Get the LTI iframe - try multiple selectors
     const iframe = page.frameLocator('iframe[name="content"], iframe[src*="' + toolPath + '"], iframe').first();
@@ -126,9 +140,8 @@ export async function launchToolAs(
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
     
-    // Mark as launched
-    toolLaunched = true;
-    currentPage = page;
+    // Mark as launched for this page
+    toolLaunchedMap.set(page, true);
     
     // Now switch to student identity
     return await switchIdentity(page, role, studentIndex);
@@ -136,7 +149,7 @@ export async function launchToolAs(
 }
 
 /**
- * Switch identity using the dropdown switcher (faster than going back to store)
+ * Switch identity using the tabbed dialog switcher (faster than going back to store)
  * @param page The Playwright page
  * @param role 'instructor' or 'student'
  * @param studentIndex If role is 'student', which student (1, 2, or 3)
@@ -148,75 +161,141 @@ async function switchIdentity(
 ): Promise<FrameLocator> {
   await debugPage(page, 'before-identity-switch');
   
-  // Find the identity dropdown - try multiple selectors
-  const dropdownSelectors = [
-    'select:has-text("Jane Instructor")',
-    'select:has-text("Instructor")',
-    'select[name*="identity"]',
-    'select[name*="user"]',
-    'select.dropdown',
-    'select',
+  // Find the identity switcher - it's a tabbed dialog, not a dropdown
+  // Look for text that says "Jane Instructor" or similar - clicking it opens the tabbed dialog
+  const instructorTextSelectors = [
+    'text="Jane Instructor"',
+    'text=/Jane.*Instructor/i',
+    'a:has-text("Jane Instructor")',
+    'button:has-text("Jane Instructor")',
+    '[role="button"]:has-text("Jane Instructor")',
+    '.dropdown-toggle:has-text("Jane")',
+    '.dropdown-toggle:has-text("Instructor")',
   ];
   
-  let dropdown = null;
-  for (const selector of dropdownSelectors) {
-    dropdown = page.locator(selector).first();
-    if (await dropdown.isVisible({ timeout: 2000 }).catch(() => false)) {
-      console.log(`Found identity dropdown with selector: ${selector}`);
+  let switcherTrigger: any = null;
+  for (const selector of instructorTextSelectors) {
+    switcherTrigger = page.locator(selector).first();
+    if (await switcherTrigger.isVisible({ timeout: 2000 }).catch(() => false)) {
+      console.log(`Found identity switcher trigger with selector: ${selector}`);
       break;
     }
   }
   
-  // If dropdown not found, try clicking on text that says "Jane Instructor"
-  if (!dropdown || !(await dropdown.isVisible({ timeout: 2000 }).catch(() => false))) {
-    const instructorText = page.locator('text="Jane Instructor", text=/Jane.*Instructor/i').first();
-    if (await instructorText.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await instructorText.click();
-      await page.waitForTimeout(500);
-      // Look for dropdown again after click
-      dropdown = page.locator('select').first();
+  if (!switcherTrigger || !(await switcherTrigger.isVisible({ timeout: 2000 }).catch(() => false))) {
+    const fs = require('fs');
+    if (!fs.existsSync(SCREENSHOT_DIR)) {
+      fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+    }
+    const screenshotPath = `${SCREENSHOT_DIR}/identity-switcher-not-found.png`;
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    throw new Error(`Could not find identity switcher. Screenshot saved to ${screenshotPath}`);
+  }
+  
+  // Click to open the identity list (ul/li with hrefs)
+  await switcherTrigger.click();
+  await page.waitForTimeout(500); // Wait for list to appear
+  
+  // Wait for the ul list to appear
+  const listSelectors = [
+    'ul.dropdown-menu',
+    'ul[role="menu"]',
+    'ul:has(li a)',
+    'ul',
+  ];
+  
+  let identityList: any = null;
+  for (const selector of listSelectors) {
+    identityList = page.locator(selector).first();
+    if (await identityList.isVisible({ timeout: 2000 }).catch(() => false)) {
+      console.log(`Found identity list with selector: ${selector}`);
+      break;
     }
   }
   
-  if (!dropdown || !(await dropdown.isVisible({ timeout: 2000 }).catch(() => false))) {
-    await page.screenshot({ path: 'identity-dropdown-not-found.png', fullPage: true });
-    throw new Error('Could not find identity dropdown. Screenshot saved to identity-dropdown-not-found.png');
+  if (!identityList || !(await identityList.isVisible({ timeout: 2000 }).catch(() => false))) {
+    const fs = require('fs');
+    if (!fs.existsSync(SCREENSHOT_DIR)) {
+      fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+    }
+    const screenshotPath = `${SCREENSHOT_DIR}/identity-list-not-found.png`;
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    throw new Error(`Could not find identity list. Screenshot saved to ${screenshotPath}`);
   }
   
-  // Select the appropriate identity
+  // Now find and click the appropriate link in the list
   if (role === 'instructor') {
-    await dropdown.selectOption({ label: /instructor/i });
-  } else {
-    const studentNum = studentIndex || 1;
-    // Try to find student option - might be "Student 1", "Learner 1", etc.
-    const studentOptions = [
-      `Student ${studentNum}`,
-      `Learner ${studentNum}`,
-      `student${studentNum}`,
-      `learner${studentNum}`,
+    const instructorLinkSelectors = [
+      'li a:has-text("Instructor")',
+      'li a:has-text("Jane")',
+      'a:has-text("Instructor")',
+      'a[href*="instructor"]',
     ];
     
-    let selected = false;
-    for (const option of studentOptions) {
-      try {
-        await dropdown.selectOption({ label: new RegExp(option, 'i') });
-        selected = true;
+    let instructorLink: any = null;
+    for (const selector of instructorLinkSelectors) {
+      // Try within the list first
+      if (identityList) {
+        instructorLink = identityList.locator(selector).first();
+        if (await instructorLink.isVisible({ timeout: 2000 }).catch(() => false)) {
+          console.log(`Found instructor link with selector: ${selector}`);
+          break;
+        }
+      }
+      // Try in page context
+      instructorLink = page.locator(selector).first();
+      if (await instructorLink.isVisible({ timeout: 2000 }).catch(() => false)) {
+        console.log(`Found instructor link in page with selector: ${selector}`);
         break;
-      } catch (e) {
-        // Try next option
       }
     }
     
-    if (!selected) {
-      // Fallback: select by index (assuming students come after instructor)
-      const options = await dropdown.locator('option').all();
-      const studentOptionIndex = studentNum; // Assuming 1-based index
-      if (options.length > studentOptionIndex) {
-        await dropdown.selectOption({ index: studentOptionIndex });
-      } else {
-        throw new Error(`Could not find student ${studentNum} option`);
+    if (instructorLink && await instructorLink.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await instructorLink.click();
+    } else {
+      console.log('Instructor link not found, may already be selected');
+    }
+  } else {
+    // Student role
+    const studentNum = studentIndex || 1;
+    const studentLinkSelectors = [
+      `li a:has-text("Student ${studentNum}")`,
+      `li a:has-text("Learner ${studentNum}")`,
+      `a:has-text("Student ${studentNum}")`,
+      `a:has-text("Learner ${studentNum}")`,
+      `a[href*="student${studentNum}"]`,
+      `a[href*="learner${studentNum}"]`,
+    ];
+    
+    let studentLink: any = null;
+    for (const selector of studentLinkSelectors) {
+      // Try within the list first
+      if (identityList) {
+        studentLink = identityList.locator(selector).first();
+        if (await studentLink.isVisible({ timeout: 2000 }).catch(() => false)) {
+          console.log(`Found student ${studentNum} link with selector: ${selector}`);
+          break;
+        }
+      }
+      // Try in page context
+      studentLink = page.locator(selector).first();
+      if (await studentLink.isVisible({ timeout: 2000 }).catch(() => false)) {
+        console.log(`Found student ${studentNum} link in page with selector: ${selector}`);
+        break;
       }
     }
+    
+    if (!studentLink || !(await studentLink.isVisible({ timeout: 2000 }).catch(() => false))) {
+      const fs = require('fs');
+      if (!fs.existsSync(SCREENSHOT_DIR)) {
+        fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+      }
+      const screenshotPath = `${SCREENSHOT_DIR}/student-${studentNum}-link-not-found.png`;
+      await page.screenshot({ path: screenshotPath, fullPage: true });
+      throw new Error(`Could not find student ${studentNum} link. Screenshot saved to ${screenshotPath}`);
+    }
+    
+    await studentLink.click();
   }
   
   // Wait for identity switch to complete and iframe to reload
@@ -277,7 +356,7 @@ export async function setAgreementText(
     'a[title*="Settings"]',
   ];
   
-  let settingsButton = null;
+  let settingsButton: any = null;
   for (const selector of settingsSelectors) {
     settingsButton = frame.locator(selector).first();
     if (await settingsButton.isVisible({ timeout: 2000 }).catch(() => false)) {
@@ -340,7 +419,7 @@ export async function setAgreementText(
     'button.btn-success',
   ];
   
-  let saveButton = null;
+  let saveButton: any = null;
   for (const selector of saveButtonSelectors) {
     // Try in frame first
     saveButton = frame.locator(selector).first();
@@ -361,9 +440,15 @@ export async function setAgreementText(
   if (!saveButton || !(await saveButton.isVisible({ timeout: 2000 }).catch(() => false))) {
     // Take screenshot for debugging
     if (page) {
-      await page.screenshot({ path: 'save-button-not-found.png', fullPage: true });
+      const fs = require('fs');
+      if (!fs.existsSync(SCREENSHOT_DIR)) {
+        fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+      }
+      const screenshotPath = `${SCREENSHOT_DIR}/save-button-not-found.png`;
+      await page.screenshot({ path: screenshotPath, fullPage: true });
+      throw new Error(`Could not find save button. Screenshot saved to ${screenshotPath}`);
     }
-    throw new Error('Could not find save button. Screenshot saved to save-button-not-found.png');
+    throw new Error('Could not find save button');
   }
   
   await saveButton.click();
@@ -382,7 +467,8 @@ export async function setAgreementText(
  */
 export async function signAgreement(
   frame: FrameLocator,
-  typedName: string
+  typedName: string,
+  page?: Page
 ): Promise<void> {
   // Wait for student view and signing form
   await frame.locator('[data-testid="student-view"]').waitFor();
@@ -402,6 +488,11 @@ export async function signAgreement(
   
   // Wait for confirmation
   await frame.locator('[data-testid="signed-confirmation"]').waitFor({ timeout: 10000 });
+  
+  // Wait a bit for the page to update
+  if (page) {
+    await page.waitForTimeout(1000);
+  }
 }
 
 /**
@@ -427,5 +518,90 @@ export async function verifyNotSigned(frame: FrameLocator): Promise<void> {
   await expect(frame.locator('[data-testid="sign-button"]')).toBeVisible();
   // Should not show signed confirmation
   await expect(frame.locator('[data-testid="signed-confirmation"]')).not.toBeVisible();
+}
+
+/**
+ * Reset tool state - clear all signatures and agreement text via UI
+ * This ensures tests start from a clean database state
+ * Uses the UI to clear agreement text, which automatically clears all signatures
+ */
+export async function resetToolState(page: Page): Promise<void> {
+  console.log('Resetting tool state via UI (clearing database)...');
+  
+  // Launch as instructor
+  let frame = await launchToolAs(page, 'agree', 'instructor');
+  await waitForToolLoad(frame);
+  
+  // Open settings
+  const settingsSelectors = [
+    'a:has-text("Settings")',
+    'button:has-text("Settings")',
+    'a[href="#"]:has-text("Settings")',
+    '.fa-cog',
+  ];
+  
+  let settingsButton: any = null;
+  for (const selector of settingsSelectors) {
+    settingsButton = frame.locator(selector).first();
+    if (await settingsButton.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await settingsButton.click();
+      await page.waitForTimeout(500);
+      break;
+    }
+    if (page) {
+      settingsButton = page.locator(selector).first();
+      if (await settingsButton.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await settingsButton.click();
+        await page.waitForTimeout(500);
+        break;
+      }
+    }
+  }
+  
+  // Clear agreement text (set to empty) - this will clear all signatures in the database
+  const textarea = frame.locator('[data-testid="agreement-text"]');
+  if (await textarea.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await textarea.waitFor({ state: 'visible', timeout: 10000 });
+    
+    // Check if there are existing signatures (confirmation checkbox will appear)
+    const confirmCheckbox = frame.locator('[data-testid="i-understand"]');
+    if (await confirmCheckbox.isVisible({ timeout: 2000 }).catch(() => false)) {
+      // Signatures exist - check the confirmation checkbox
+      await confirmCheckbox.check();
+      await page.waitForTimeout(500);
+    }
+    
+    // Clear the textarea
+    await textarea.clear();
+    
+    // Save - this will clear all signatures in the database
+    const saveButtonSelectors = [
+      '[data-testid="save-agreement"]',
+      'button[type="submit"]',
+      'input[type="submit"]',
+    ];
+    
+    for (const selector of saveButtonSelectors) {
+      const saveButton = frame.locator(selector).first();
+      if (await saveButton.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await saveButton.click();
+        await page.waitForTimeout(2000);
+        break;
+      }
+      if (page) {
+        const saveButtonPage = page.locator(selector).first();
+        if (await saveButtonPage.isVisible({ timeout: 2000 }).catch(() => false)) {
+          await saveButtonPage.click();
+          await page.waitForTimeout(2000);
+          break;
+        }
+      }
+    }
+  }
+  
+  // Reset the launch state tracking for this page so next test starts fresh
+  toolLaunchedMap.delete(page);
+  
+  console.log('Tool state reset complete - database cleared via UI');
 }
 

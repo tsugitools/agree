@@ -50,4 +50,9 @@ build/
 tests/playwright/playwright-report/
 tests/playwright/test-results/
 tests/playwright/node_modules/
+tests/playwright/screenshots/
+# Screenshots from test failures/debugging
+tests/playwright/*.png
+tests/playwright/*.jpg
+tests/playwright/*.jpeg
 
