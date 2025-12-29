@@ -522,11 +522,11 @@ export async function verifyNotSigned(frame: FrameLocator): Promise<void> {
 
 /**
  * Reset tool state - clear all signatures and agreement text via UI
- * This ensures tests start from a clean database state
- * Uses the UI to clear agreement text, which automatically clears all signatures
+ * This ensures tests start from a clean state
+ * Uses the UI to clear agreement text, which automatically clears all signatures per tool behavior
  */
 export async function resetToolState(page: Page): Promise<void> {
-  console.log('Resetting tool state via UI (clearing database)...');
+  console.log('Resetting tool state via UI...');
   
   // Launch as instructor
   let frame = await launchToolAs(page, 'agree', 'instructor');
@@ -558,7 +558,7 @@ export async function resetToolState(page: Page): Promise<void> {
     }
   }
   
-  // Clear agreement text (set to empty) - this will clear all signatures in the database
+  // Clear agreement text (set to empty) - this will clear all signatures via the tool's normal behavior
   const textarea = frame.locator('[data-testid="agreement-text"]');
   if (await textarea.isVisible({ timeout: 2000 }).catch(() => false)) {
     await textarea.waitFor({ state: 'visible', timeout: 10000 });
@@ -574,7 +574,7 @@ export async function resetToolState(page: Page): Promise<void> {
     // Clear the textarea
     await textarea.clear();
     
-    // Save - this will clear all signatures in the database
+    // Save - this triggers the tool's normal behavior to clear all signatures
     const saveButtonSelectors = [
       '[data-testid="save-agreement"]',
       'button[type="submit"]',
@@ -602,6 +602,6 @@ export async function resetToolState(page: Page): Promise<void> {
   // Reset the launch state tracking for this page so next test starts fresh
   toolLaunchedMap.delete(page);
   
-  console.log('Tool state reset complete - database cleared via UI');
+  console.log('Tool state reset complete');
 }
 
